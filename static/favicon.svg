@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-label="AEF DAW">
+  <!-- Charcoal panel body, rounded like a synth chassis. -->
+  <rect width="32" height="32" rx="6" fill="#1a1614"/>
+
+  <!-- Inner rim highlight to suggest the bevel from the synth aesthetic. -->
+  <rect x="0.5" y="0.5" width="31" height="31" rx="5.5" fill="none"
+        stroke="rgba(255,255,255,0.06)"/>
+
+  <!-- Three input jacks (small cream pinholes) along the top edge. -->
+  <g fill="#d8c79e">
+    <circle cx="7" cy="6" r="1.5"/>
+    <circle cx="16" cy="6" r="1.5"/>
+    <circle cx="25" cy="6" r="1.5"/>
+  </g>
+
+  <!-- Three R/G/B cables dropping straight from inputs to outputs. -->
+  <g fill="none" stroke-width="2.4" stroke-linecap="round">
+    <path d="M7 7.5 V25" stroke="#ff2e3c"/>
+    <path d="M16 7.5 V25" stroke="#56ff7a"/>
+    <path d="M25 7.5 V25" stroke="#4d8eff"/>
+  </g>
+
+  <!-- Three output sockets — colored rim with a dark inner pinhole. -->
+  <g>
+    <circle cx="7"  cy="26" r="3" fill="#ff2e3c"/>
+    <circle cx="7"  cy="26" r="1.4" fill="#1a1614"/>
+    <circle cx="16" cy="26" r="3" fill="#56ff7a"/>
+    <circle cx="16" cy="26" r="1.4" fill="#1a1614"/>
+    <circle cx="25" cy="26" r="3" fill="#4d8eff"/>
+    <circle cx="25" cy="26" r="1.4" fill="#1a1614"/>
+  </g>
+</svg>

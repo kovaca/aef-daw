@@ -1,0 +1,86 @@
+:root {
+  /* Synth-panel palette — anodized charcoal body, cream knobs, LED accents.
+     Inspired by Korg Volca / Moog Mother-32 silkscreen */
+  --panel-body:        #1a1614;
+  --panel-section:     #221c19;
+  --panel-edge:        #0d0a08;
+  --panel-rim:         #2c2520;
+  --silkscreen:        #d8c79e;
+  --silkscreen-dim:    #6e604a;
+  --knob-cap:          #e8e1cf;
+  --knob-cap-shadow:   #b9af96;
+  --knob-indicator:    #1a1614;
+  --led-r:             #ff2e3c;
+  --led-g:             #56ff7a;
+  --led-b:             #4d8eff;
+  --led-amber:         #ffb302;
+  --neg-weight:        #ff5cb1;
+  --screw:             #4a3f33;
+  --rim-highlight:     rgba(255, 255, 255, 0.08);
+  --text:              #e8e1cf;
+  --muted:             #8b7d63;
+
+  /* Drawer expanded height — overridden on narrow viewports below. */
+  --drawer-expanded-h: 280px;
+
+  /* Legacy aliases */
+  --bg:                var(--panel-edge);
+  --panel:             var(--panel-body);
+  --panel-2:           var(--panel-section);
+  --line:              var(--panel-edge);
+  --accent:            var(--led-amber);
+
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--panel-edge);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input[type="range"] {
+  accent-color: var(--led-amber);
+}
+
+select,
+input[type="number"] {
+  background: var(--panel-section);
+  color: var(--text);
+  border: 1px solid var(--panel-edge);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font: inherit;
+}
+
+/* Silkscreen label utility — uppercase, tracked, cream. */
+.silkscreen {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--silkscreen);
+  font-size: 10px;
+  font-weight: 500;
+}
+.silkscreen-dim {
+  color: var(--silkscreen-dim);
+}
+
+/* Mobile / tablet: drawer takes more vertical space because its body stacks. */
+@media (max-width: 720px) {
+  :root {
+    --drawer-expanded-h: 70vh;
+  }
+}
