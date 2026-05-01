@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { browser } from "$app/environment";
+  import { replaceState } from "$app/navigation";
+  import { page } from "$app/state";
   import { MixState } from "$lib/state.svelte.js";
   import { TurboState } from "$lib/audio/turbo-state.svelte.js";
   import { audioEngine } from "$lib/audio/engine.js";
@@ -19,7 +21,9 @@
   $effect(() => {
     void aef.mode;
     void aef.yearIdx;
-    void aef.locationId;
+    void aef.lng;
+    void aef.lat;
+    void aef.zoom;
     void aef.rescale[0];
     void aef.rescale[1];
     void aef.mix.r;
@@ -30,7 +34,9 @@
     raf = requestAnimationFrame(() => {
       const hash = "#" + serialize(aef);
       if (window.location.hash !== hash) {
-        history.replaceState(null, "", hash);
+        const url = new URL(window.location.href);
+        url.hash = hash;
+        replaceState(url, page.state);
       }
     });
   });
@@ -164,6 +170,9 @@
     left: 0;
     right: 0;
     bottom: var(--drawer-h, 280px);
-    transition: bottom 180ms ease-out;
+    /* No `transition: bottom` — Chrome won't transition properties whose
+       value comes from a CSS custom property, and an active transition
+       prevents the new value from applying at all. The drawer height
+       snaps instantly, so this just tracks it. */
   }
 </style>

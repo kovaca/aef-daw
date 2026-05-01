@@ -35,6 +35,27 @@
   let lowProxy = $state(untrack(() => aef.rescale[0]));
   let highProxy = $state(untrack(() => aef.rescale[1]));
 
+  // Pick the preset whose coords + zoom are closest to the current view, if any.
+  // Latitude correction keeps the threshold roughly screen-relative away from the equator.
+  // Tolerances are loose so a small pan from a preset still keeps it selected.
+  const closestPresetId = $derived.by(() => {
+    const lng = aef.lng;
+    const lat = aef.lat;
+    const zoom = aef.zoom;
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    let best: { id: string; d: number } | null = null;
+    for (const p of LOCATIONS) {
+      const dLng = (p.longitude - lng) * cosLat;
+      const dLat = p.latitude - lat;
+      const d = Math.hypot(dLng, dLat);
+      const dz = Math.abs(p.zoom - zoom);
+      if (d < 0.5 && dz < 1.5 && (!best || d < best.d)) {
+        best = { id: p.id, d };
+      }
+    }
+    return best?.id ?? "";
+  });
+
   $effect(() => {
     if (lowProxy !== aef.rescale[0] || highProxy !== aef.rescale[1]) {
       aef.rescale = [lowProxy, highProxy];
@@ -87,7 +108,16 @@
 
   <label>
     <span>Location</span>
-    <select bind:value={aef.locationId}>
+    <select
+      value={closestPresetId}
+      onchange={(e) => {
+        const t = e.currentTarget;
+        if (t.value) aef.flyToPreset(t.value);
+      }}
+    >
+      {#if !closestPresetId}
+        <option value="">— custom view —</option>
+      {/if}
       {#each LOCATIONS as l (l.id)}
         <option value={l.id}>{l.label}</option>
       {/each}
@@ -116,7 +146,7 @@
 
   <div class="action-row">
     <button class="action share" onclick={copyShareUrl}>
-      {copied ? "COPIED" : "SHARE URL"}
+      {copied ? "COPIED" : "SHARE"}
     </button>
     <button class="action about" onclick={onAbout}>ABOUT</button>
   </div>

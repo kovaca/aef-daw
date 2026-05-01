@@ -5,6 +5,86 @@
 
   let { aef }: { aef: MixState } = $props();
 
+  // Tooltip on R/G/B output node — surfaces the per-channel patch math.
+  let openChannel: Channel | null = $state(null);
+  let tooltipScreen = $state<{ x: number; y: number } | null>(null);
+
+  function jackScreenPos(ch: Channel): { x: number; y: number } | null {
+    if (!svgEl) return null;
+    const rect = svgEl.getBoundingClientRect();
+    const xRatio = rect.width / svgWidth;
+    const yRatio = rect.height / (BOTTOM_Y + 32);
+    return {
+      x: rect.left + channelX(ch) * xRatio,
+      y: rect.top + BOTTOM_Y * yRatio,
+    };
+  }
+
+  function toggleChannelTooltip(ch: Channel, _ev: Event) {
+    if (openChannel === ch) {
+      openChannel = null;
+      tooltipScreen = null;
+      return;
+    }
+    openChannel = ch;
+    tooltipScreen = jackScreenPos(ch);
+  }
+
+  // Reposition while open so the tooltip tracks scroll/drawer-resize.
+  $effect(() => {
+    if (openChannel === null) return;
+    const ch = openChannel;
+    void svgWidth;
+    const reposition = () => {
+      tooltipScreen = jackScreenPos(ch);
+    };
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  });
+
+  // Dismiss on outside click / Escape.
+  $effect(() => {
+    if (openChannel === null) return;
+    const onDocPointer = (ev: PointerEvent) => {
+      const t = ev.target as Element | null;
+      if (!t) return;
+      if (t.closest(".rgb-tooltip")) return;
+      if (t.closest(".output-jack")) return;
+      openChannel = null;
+      tooltipScreen = null;
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        openChannel = null;
+        tooltipScreen = null;
+      }
+    };
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointer, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  });
+
+  type CableRow = { band: number; weight: number; label: string };
+  const openCables = $derived.by<CableRow[]>(() => {
+    if (openChannel === null) return [];
+    const entries = [...aef.mix[openChannel].entries()];
+    entries.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    return entries.map(([band, weight]) => ({
+      band,
+      weight,
+      label: aef.bandLabels?.[band] ?? `Band ${band}`,
+    }));
+  });
+  const rescaleSpan = $derived(aef.rescale[1] - aef.rescale[0]);
+
   // Layout — wide horizontal patchbay; 64 input jacks across the top edge,
   // 3 RGB output jacks evenly across the bottom.
   const PAD_X = 32;
@@ -227,14 +307,29 @@
   {#each ["r", "g", "b"] as ch (ch)}
     {@const x = channelX(ch as Channel)}
     {@const fill = channelColor(ch as Channel)}
-    <g class="output-jack">
+    {@const isOpen = openChannel === ch}
+    <g
+      class="output-jack"
+      class:open={isOpen}
+      role="button"
+      tabindex="0"
+      aria-label={`${(ch as string).toUpperCase()} output — show channel math`}
+      aria-pressed={isOpen}
+      onclick={(ev) => toggleChannelTooltip(ch as Channel, ev)}
+      onkeydown={(ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          toggleChannelTooltip(ch as Channel, ev);
+        }
+      }}
+    >
       <circle
         cx={x}
         cy={BOTTOM_Y}
         r="20"
         fill="url(#jack-rim)"
         stroke={fill}
-        stroke-width="2.5"
+        stroke-width={isOpen ? 3.5 : 2.5}
         class="rim"
       />
       <circle cx={x} cy={BOTTOM_Y} r="9" fill={fill} class="led" />
@@ -244,6 +339,64 @@
     </g>
   {/each}
 </svg>
+
+{#if openChannel && tooltipScreen}
+  {@const ch = openChannel}
+  {@const lo = aef.rescale[0]}
+  {@const hi = aef.rescale[1]}
+  <div
+    class="rgb-tooltip"
+    class:c-r={ch === "r"}
+    class:c-g={ch === "g"}
+    class:c-b={ch === "b"}
+    style:left="{tooltipScreen.x}px"
+    style:top="{tooltipScreen.y}px"
+    role="dialog"
+    aria-label="{ch.toUpperCase()} channel math"
+  >
+    <header>
+      <span class="dot" aria-hidden="true"></span>
+      <strong>{ch.toUpperCase()} output</strong>
+      <button
+        class="close"
+        onclick={() => { openChannel = null; tooltipScreen = null; }}
+        aria-label="Close"
+      >×</button>
+    </header>
+
+    {#if openCables.length === 0}
+      <p class="empty">No bands patched into this channel.</p>
+    {:else}
+      <div class="section-label">Bands → weight</div>
+      <ul class="cables">
+        {#each openCables as row (row.band)}
+          <li>
+            <span class="band-id">A{String(row.band).padStart(2, "0")}</span>
+            <span class="band-label" title={row.label}>{row.label}</span>
+            <span class="weight" class:neg={row.weight < 0}>
+              {row.weight >= 0 ? "+" : ""}{row.weight.toFixed(2)}
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    <div class="section-label">Per-pixel math</div>
+    <div class="math">
+      <div><span class="lhs">v̂ᵢ</span> = (vᵢ / 127.5)² · sign(vᵢ)</div>
+      <div><span class="lhs">accum</span> = Σ wᵢ · v̂ᵢ</div>
+      <div>
+        <span class="lhs">norm</span> = clamp((accum − {lo.toFixed(2)}) / {rescaleSpan.toFixed(2)}, 0, 1)
+      </div>
+      <div><span class="lhs">{ch.toUpperCase()}₈</span> = round(norm × 255)</div>
+    </div>
+
+    <div class="footer">
+      Rescale window <strong>{lo.toFixed(2)} → {hi.toFixed(2)}</strong>
+      maps to <strong>0 → 255</strong> (8-bit RGBA framebuffer).
+    </div>
+  </div>
+{/if}
 
 <style>
   .switchboard {
@@ -293,10 +446,166 @@
     letter-spacing: 0.12em;
     pointer-events: none;
   }
+  .output-jack {
+    cursor: pointer;
+  }
+  .output-jack:focus-visible .rim {
+    stroke-width: 3.5;
+  }
   .output-jack .led {
     filter: drop-shadow(0 0 4px currentColor);
   }
   .output-jack .rim {
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+    transition: stroke-width 120ms ease-out;
+  }
+  .output-jack.open .led {
+    filter: drop-shadow(0 0 8px currentColor);
+  }
+
+  .rgb-tooltip {
+    position: fixed;
+    z-index: 2000;
+    transform: translate(-50%, calc(-100% - 28px));
+    width: min(320px, calc(100vw - 24px));
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    background: rgba(20, 16, 14, 0.96);
+    border: 1px solid var(--panel-edge);
+    border-top-width: 2px;
+    border-radius: 6px;
+    color: var(--silkscreen);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    padding: 10px 12px 12px;
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 var(--rim-highlight);
+    backdrop-filter: blur(6px);
+  }
+  .rgb-tooltip.c-r { border-top-color: var(--led-r); }
+  .rgb-tooltip.c-g { border-top-color: var(--led-g); }
+  .rgb-tooltip.c-b { border-top-color: var(--led-b); }
+  /* Caret-down arrow tying the tooltip back to the jack. */
+  .rgb-tooltip::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -6px;
+    width: 10px;
+    height: 10px;
+    background: rgba(20, 16, 14, 0.96);
+    border-right: 1px solid var(--panel-edge);
+    border-bottom: 1px solid var(--panel-edge);
+    transform: translateX(-50%) rotate(45deg);
+  }
+  .rgb-tooltip header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--panel-edge);
+    margin-bottom: 8px;
+  }
+  .rgb-tooltip header strong {
+    flex: 1 1 auto;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--silkscreen);
+  }
+  .rgb-tooltip .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 6px currentColor;
+  }
+  .rgb-tooltip.c-r .dot { background: var(--led-r); color: var(--led-r); }
+  .rgb-tooltip.c-g .dot { background: var(--led-g); color: var(--led-g); }
+  .rgb-tooltip.c-b .dot { background: var(--led-b); color: var(--led-b); }
+  .rgb-tooltip .close {
+    background: transparent;
+    border: 0;
+    color: var(--silkscreen-dim);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .rgb-tooltip .close:hover { color: var(--led-amber); }
+
+  .rgb-tooltip .section-label {
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--silkscreen-dim);
+    margin: 8px 0 4px;
+  }
+  .rgb-tooltip .section-label:first-of-type { margin-top: 0; }
+
+  .rgb-tooltip .empty {
+    margin: 0;
+    color: var(--silkscreen-dim);
+    font-style: italic;
+  }
+
+  .rgb-tooltip .cables {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rgb-tooltip .cables li {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .rgb-tooltip .band-id {
+    color: var(--silkscreen);
+    font-weight: 500;
+  }
+  .rgb-tooltip .band-label {
+    color: var(--silkscreen-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rgb-tooltip .weight {
+    color: var(--led-g);
+    font-variant-numeric: tabular-nums;
+  }
+  .rgb-tooltip .weight.neg { color: var(--led-r); }
+
+  .rgb-tooltip .math {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--silkscreen);
+    background: rgba(0, 0, 0, 0.25);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 10.5px;
+  }
+  .rgb-tooltip .math .lhs {
+    color: var(--led-amber);
+    display: inline-block;
+    min-width: 44px;
+    font-style: italic;
+  }
+
+  .rgb-tooltip .footer {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--panel-edge);
+    color: var(--silkscreen-dim);
+    font-size: 10px;
+  }
+  .rgb-tooltip .footer strong {
+    color: var(--silkscreen);
+    font-weight: 500;
   }
 </style>

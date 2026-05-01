@@ -1,15 +1,16 @@
 import * as zarr from "zarrita";
 import { fetchBandLabels } from "./aef/band-labels.js";
 import { NUM_BANDS, VARIABLE, ZARR_URL } from "./aef/constants.js";
-import { LOCATIONS, type Location } from "./aef/locations.js";
+import { LOCATIONS } from "./aef/locations.js";
 
 export type Channel = "r" | "g" | "b";
 export type Mode = "basic" | "advanced" | "turbo";
 export type RescaleRange = [number, number];
 
-const DEFAULT_R = 0;
-const DEFAULT_G = 16;
-const DEFAULT_B = 32;
+const DEFAULT_R = 8;
+const DEFAULT_G = 31;
+const DEFAULT_B = 43;
+const DEFAULT_LOCATION = LOCATIONS[0]!;
 
 function densify(sparse: Map<number, number>): Float32Array {
   const out = new Float32Array(NUM_BANDS);
@@ -32,7 +33,10 @@ export class MixState {
   });
   yearIdx = $state(8); // 2025
   rescale = $state<RescaleRange>([-0.3, 0.3]);
-  locationId = $state<string>(LOCATIONS[0]!.id);
+
+  lng = $state<number>(DEFAULT_LOCATION.longitude);
+  lat = $state<number>(DEFAULT_LOCATION.latitude);
+  zoom = $state<number>(DEFAULT_LOCATION.zoom);
 
   arr = $state<zarr.Array<"int8", zarr.Readable> | null>(null);
   rootAttrs = $state<unknown>(null);
@@ -45,8 +49,12 @@ export class MixState {
 
   selection = $derived({ time: this.yearIdx, band: null as null });
 
-  get location(): Location {
-    return LOCATIONS.find((l) => l.id === this.locationId) ?? LOCATIONS[0]!;
+  flyToPreset(id: string): void {
+    const loc = LOCATIONS.find((l) => l.id === id);
+    if (!loc) return;
+    this.lng = loc.longitude;
+    this.lat = loc.latitude;
+    this.zoom = loc.zoom;
   }
 
   /** Single sparse band index per channel (basic mode invariant). */

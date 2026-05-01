@@ -40,21 +40,21 @@ export const LOCATIONS: readonly Location[] = [
     label: "Amazon deforestation frontier (Rondônia)",
     longitude: -62.2,
     latitude: -9.5,
-    zoom: 12,
+    zoom: 13,
   },
   {
     id: "nile-delta",
     label: "Nile delta (irrigation mosaic)",
     longitude: 31.2,
     latitude: 30.8,
-    zoom: 12,
+    zoom: 13,
   },
   {
     id: "alaska-north-slope",
     label: "Alaska North Slope (tundra)",
     longitude: -150.0,
     latitude: 69.5,
-    zoom: 12,
+    zoom: 13,
   },
 ];
 

@@ -16,11 +16,9 @@
 
   let {
     aef,
-    onMapCenter,
     onCanvasReady,
   }: {
     aef: MixState;
-    onMapCenter?: (c: { lng: number; lat: number }) => void;
     onCanvasReady?: (canvas: HTMLCanvasElement) => void;
   } = $props();
 
@@ -28,6 +26,15 @@
   let map: MaplibreMap | null = null;
   let overlay: MapboxOverlay | null = null;
 
+  // Track the last view we wrote into state from a map gesture, so the
+  // state→map flyTo effect can distinguish "user just panned" (skip flyTo)
+  // from "external code set new coords" (do flyTo).
+  let lastEmittedLng = untrack(() => aef.lng);
+  let lastEmittedLat = untrack(() => aef.lat);
+  let lastEmittedZoom = untrack(() => aef.zoom);
+
+  let lowZoomDismissed = $state(false);
+  let lowZoom = $derived(aef.zoom <= 12);
 
   let device: Device | null = $state(null);
   let weightsTex: Texture | null = $state(null);
@@ -43,13 +50,12 @@
 
   onMount(() => {
     if (!browser) return;
-    const initial = aef.location;
     map = new MaplibreMap({
       container: mapEl,
       style:
         "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json" as unknown as StyleSpecification,
-      center: [initial.longitude, initial.latitude],
-      zoom: initial.zoom,
+      center: [untrack(() => aef.lng), untrack(() => aef.lat)],
+      zoom: untrack(() => aef.zoom),
       attributionControl: { compact: true },
 
       canvasContextAttributes: { preserveDrawingBuffer: true },
@@ -57,29 +63,50 @@
     if (onCanvasReady) onCanvasReady(map.getCanvas());
     overlay = new MapboxOverlay({ interleaved: true, layers: [] });
     map.addControl(overlay);
-    if (onMapCenter) {
-      const emit = () => {
+
+    // Push map gestures into state, rAF-coalesced so a pan doesn't run the
+    // reactive graph (and URL writer) on every render frame.
+    let moveRaf: number | null = null;
+    map.on("move", () => {
+      if (moveRaf !== null) return;
+      moveRaf = requestAnimationFrame(() => {
+        moveRaf = null;
         if (!map) return;
         const c = map.getCenter();
-        onMapCenter({ lng: c.lng, lat: c.lat });
-      };
-      emit();
-      map.on("moveend", emit);
-    }
+        const z = map.getZoom();
+        lastEmittedLng = c.lng;
+        lastEmittedLat = c.lat;
+        lastEmittedZoom = z;
+        aef.lng = c.lng;
+        aef.lat = c.lat;
+        aef.zoom = z;
+      });
+    });
+
     void aef.load();
   });
 
-
-  let lastLocation = untrack(() => aef.locationId);
+  // External coord changes (preset jump, applyHash) -> flyTo. We compare
+  // against the last value emitted by the map itself; if state matches the
+  // map, the change came from a gesture and we skip.
   $effect(() => {
-    const id = aef.locationId;
+    const lng = aef.lng;
+    const lat = aef.lat;
+    const zoom = aef.zoom;
     if (!map) return;
-    if (id === lastLocation) return;
-    lastLocation = id;
-    const next = aef.location;
+    if (
+      Math.abs(lng - lastEmittedLng) < 1e-6 &&
+      Math.abs(lat - lastEmittedLat) < 1e-6 &&
+      Math.abs(zoom - lastEmittedZoom) < 1e-3
+    ) {
+      return;
+    }
+    lastEmittedLng = lng;
+    lastEmittedLat = lat;
+    lastEmittedZoom = zoom;
     map.flyTo({
-      center: [next.longitude, next.latitude],
-      zoom: next.zoom,
+      center: [lng, lat],
+      zoom,
       duration: 500,
       essential: true,
     });
@@ -159,8 +186,13 @@
           rescaleMax,
         });
 
+    // Layer id is intentionally stable across mode (basic / advanced / turbo)
+    // — those only change the GPU shader pipeline, not the tile data, so
+    // there's no reason to drop the tile cache. We do still rebuild on year
+    // change because that selects a different time slice of the array.
+    // Mode-driven shader swaps go through `updateTriggers.renderTile`.
     const layerProps = {
-      id: `aef-zarr-layer-${useAdvanced ? "advanced" : "basic"}-${yearIdx}`,
+      id: `aef-zarr-layer-${yearIdx}`,
       node: aef.arr,
       metadata: aef.rootAttrs,
       selection: aef.selection,
@@ -168,7 +200,9 @@
       renderTile,
       minZoom: MIN_ZOOM,
       maxRequests: 20,
-      maxCacheSize: 10,
+      // ~256×256×64 bytes per tile = 4MB on the GPU, 
+      // so 64 tiles ≈ 256MB - seems fine but eh?
+      maxCacheSize: 64,
       updateTriggers: {
         renderTile: [
           mode,
@@ -209,6 +243,20 @@
 
 <div bind:this={mapEl} class="map"></div>
 
+{#if lowZoom && !lowZoomDismissed && !aef.loadError}
+  <div class="low-zoom-warn" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="msg">
+      Low zoom — AEF chunks have no overviews and load slowly. Zoom in for snappier rendering.
+    </span>
+    <button
+      class="dismiss"
+      aria-label="Dismiss low-zoom warning"
+      onclick={() => (lowZoomDismissed = true)}
+    >×</button>
+  </div>
+{/if}
+
 {#if aef.loadError}
   <div class="error">
     <strong>Failed to load AEF data.</strong>
@@ -236,6 +284,59 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+  .low-zoom-warn {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(420px, calc(100% - 24px));
+    padding: 6px 8px 6px 10px;
+    background: rgba(20, 16, 14, 0.78);
+    border: 1px solid var(--led-amber, #c79431);
+    border-radius: 4px;
+    color: var(--silkscreen, #d6c8b3);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.35;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  }
+  .low-zoom-warn .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--led-amber, #c79431);
+    box-shadow: 0 0 6px var(--led-amber, #c79431);
+    flex: 0 0 auto;
+  }
+  .low-zoom-warn .msg {
+    flex: 1 1 auto;
+  }
+  .low-zoom-warn .dismiss {
+    flex: 0 0 auto;
+    background: transparent;
+    border: 0;
+    color: var(--silkscreen-dim, #9a8c75);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .low-zoom-warn .dismiss:hover {
+    color: var(--led-amber, #c79431);
+  }
+  @media (max-width: 720px) {
+    .low-zoom-warn {
+      top: 8px;
+      left: 8px;
+      right: 8px;
+      max-width: none;
+      font-size: 10px;
+    }
   }
   :global(.maplibregl-ctrl-attrib) {
     background: rgba(0, 0, 0, 0.5) !important;

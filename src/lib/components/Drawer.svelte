@@ -10,19 +10,142 @@
     turbo,
     onAbout,
   }: { aef: MixState; turbo: TurboState; onAbout: () => void } = $props();
-  let collapsed = $state(false);
 
+  /**
+   * Making this not terrible for touch devices is a little yikes.
+   *  - Mobile (≤720px): snap targets at 28px / min(50vh, 360px) / 85vh.
+   *  - Desktop: snap targets at 28px / 280px.
+   */
+  const COLLAPSED_PX = 28;
+  const TAP_PX = 5; // movement threshold below which a pointerup is "tap"
+  const DESKTOP_OPEN_PX = 280;
+
+  let isMobile = $state(false);
+  let viewportH = $state(800);
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 720px)");
+    isMobile = mq.matches;
+    viewportH = window.innerHeight;
+    const onMqChange = (e: MediaQueryListEvent) => (isMobile = e.matches);
+    const onResize = () => (viewportH = window.innerHeight);
+    mq.addEventListener("change", onMqChange);
+    window.addEventListener("resize", onResize);
+    return () => {
+      mq.removeEventListener("change", onMqChange);
+      window.removeEventListener("resize", onResize);
+    };
+  });
+
+  const targets = $derived(
+    isMobile
+      ? [
+          COLLAPSED_PX,
+          Math.min(viewportH * 0.5, 360),
+          viewportH * 0.85,
+        ]
+      : [COLLAPSED_PX, DESKTOP_OPEN_PX],
+  );
+
+  // Default to first non-collapsed target. 
+  let heightPx = $state(DESKTOP_OPEN_PX);
+  let lastOpenPx = $state(DESKTOP_OPEN_PX);
+
+  // open height to the nearest target for that viewport.
+  $effect(() => {
+    void isMobile;
+    if (heightPx <= COLLAPSED_PX + 1) return;
+    const nearest = nearestTarget(heightPx, targets);
+    heightPx = nearest;
+    lastOpenPx = nearest;
+  });
 
   $effect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.style.setProperty(
       "--drawer-h",
-      collapsed ? "28px" : "var(--drawer-expanded-h, 280px)",
+      `${heightPx}px`,
     );
   });
+
+  const collapsed = $derived(heightPx <= COLLAPSED_PX + 1);
+  const ariaLabel = $derived(collapsed ? "Expand patchbay" : "Collapse patchbay");
+
+  function nearestTarget(h: number, ts: readonly number[]): number {
+    let best = ts[0]!;
+    let bestD = Math.abs(h - best);
+    for (const t of ts) {
+      const d = Math.abs(h - t);
+      if (d < bestD) {
+        best = t;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  let dragging = $state(false);
+  let dragStartY = 0;
+  let dragStartH = 0;
+  let dragMoved = false;
+
+  function onPointerDown(ev: PointerEvent) {
+    // Only respond to primary button / touch / pen.
+    if (ev.button !== 0 && ev.pointerType === "mouse") return;
+    ev.preventDefault();
+    dragging = true;
+    dragMoved = false;
+    dragStartY = ev.clientY;
+    dragStartH = heightPx;
+    (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
+  }
+
+  function onPointerMove(ev: PointerEvent) {
+    if (!dragging) return;
+    const dy = ev.clientY - dragStartY;
+    if (Math.abs(dy) > TAP_PX) dragMoved = true;
+    if (!dragMoved) return;
+    const maxPx = (typeof window !== "undefined" ? window.innerHeight : 1000) * 0.95;
+    const next = Math.max(COLLAPSED_PX, Math.min(maxPx, dragStartH - dy));
+    heightPx = next;
+  }
+
+  function onPointerUp(ev: PointerEvent) {
+    if (!dragging) return;
+    dragging = false;
+    const target = ev.currentTarget as HTMLElement;
+    if (target.hasPointerCapture(ev.pointerId)) {
+      target.releasePointerCapture(ev.pointerId);
+    }
+    if (!dragMoved) {
+      // Tap: toggle.
+      if (collapsed) {
+        heightPx = lastOpenPx;
+      } else {
+        lastOpenPx = heightPx;
+        heightPx = COLLAPSED_PX;
+      }
+    } else {
+      const snapped = nearestTarget(heightPx, targets);
+      heightPx = snapped;
+      if (snapped > COLLAPSED_PX + 1) lastOpenPx = snapped;
+    }
+  }
+
+  function onKey(ev: KeyboardEvent) {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      if (collapsed) heightPx = lastOpenPx;
+      else {
+        lastOpenPx = heightPx;
+        heightPx = COLLAPSED_PX;
+      }
+    }
+  }
 </script>
 
-<div class="drawer" class:collapsed>
+<div class="drawer" class:collapsed class:dragging>
   <!-- Panel screws — pure decoration. -->
   <span class="screw tl" aria-hidden="true"></span>
   <span class="screw tr" aria-hidden="true"></span>
@@ -31,9 +154,14 @@
 
   <button
     class="handle"
-    onclick={() => (collapsed = !collapsed)}
-    aria-label={collapsed ? "Expand patchbay" : "Collapse patchbay"}
+    type="button"
+    aria-label={ariaLabel}
     aria-expanded={!collapsed}
+    onpointerdown={onPointerDown}
+    onpointermove={onPointerMove}
+    onpointerup={onPointerUp}
+    onpointercancel={onPointerUp}
+    onkeydown={onKey}
   >
     <span class="grip"></span>
     <span class="caret">{collapsed ? "▲" : "▼"}</span>
@@ -70,7 +198,6 @@
     display: flex;
     flex-direction: column;
     pointer-events: auto;
-    transition: height 180ms ease-out;
     overflow: hidden;
   }
   .screw {
@@ -102,22 +229,35 @@
     border: 0;
     border-bottom: 1px solid var(--panel-edge);
     color: var(--silkscreen-dim);
-    cursor: pointer;
+    cursor: ns-resize;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     padding: 0;
     font-size: 10px;
+    touch-action: none;
+    user-select: none;
   }
   .handle:hover {
     background: #2a221c;
+  }
+  .handle:hover .grip {
+    background: var(--silkscreen-dim);
+  }
+  .drawer.dragging .handle {
+    background: #2a221c;
+  }
+  .drawer.dragging .handle .grip {
+    background: var(--led-amber);
+    box-shadow: 0 0 4px var(--led-amber);
   }
   .grip {
     width: 60px;
     height: 4px;
     background: var(--screw);
     border-radius: 2px;
+    transition: background 120ms;
   }
   .caret {
     font-size: 9px;
@@ -138,6 +278,8 @@
     .body {
       flex-direction: column;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
     }
     .switchboard-wrap {
       flex: 0 0 220px;
