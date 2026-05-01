@@ -18,7 +18,7 @@ The [AlphaEarth Foundations](https://deepmind.google/discover/blog/alphaearth-fo
 
 ## Stack
 
-[@developmentseed/deck.gl-raster](https://github.com/developmentseed/deck.gl-raster) + [@developmentseed/deck.gl-zarr](https://github.com/developmentseed/deck.gl-raster) for the GPU shader pipeline · [zarrita](https://github.com/manzt/zarrita.js) for zarr in the browser · WebAudio for the synth voice in Turbo mode · [SvelteKit](https://kit.svelte.dev) (Svelte 5 runes, static adapter) · [maplibre-gl](https://maplibre.org) basemap.
+[@developmentseed/deck.gl-raster](https://github.com/developmentseed/deck.gl-raster) with fresh new Zarr support for the GPU shader pipeline · [zarrita](https://github.com/manzt/zarrita.js) for zarr in the browser · WebAudio for the synth voice in Turbo mode · [SvelteKit](https://kit.svelte.dev) (Svelte 5 runes, static adapter) · [maplibre-gl](https://maplibre.org) basemap.
 
 The shader pipeline lives in `src/lib/gpu/`:
 - `sample-aef-rgb.ts` — basic mode; samples three layers of an int8 Texture2DArray, dequantizes, rescales.
