@@ -24,3 +24,9 @@ export const NODATA_INT8 = -128;
 export const DEQUANT_DIVISOR = 127.5;
 
 export const MIN_ZOOM = 10;
+
+/**
+ * Budget for the compressed chunk-byte LRU in front of the store. Inner
+ * chunks are ~1–3 MB zstd, so this holds on the order of 100 tiles.
+ */
+export const CHUNK_CACHE_BYTES = 256 * 1024 * 1024;

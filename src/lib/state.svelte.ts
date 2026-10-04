@@ -1,7 +1,14 @@
 import * as zarr from "zarrita";
 import { fetchBandLabels } from "./aef/band-labels.js";
-import { NUM_BANDS, VARIABLE, ZARR_URL } from "./aef/constants.js";
+import { ByteLru, chunkRangesOnly } from "./aef/byte-lru.js";
+import {
+  CHUNK_CACHE_BYTES,
+  NUM_BANDS,
+  VARIABLE,
+  ZARR_URL,
+} from "./aef/constants.js";
 import { LOCATIONS } from "./aef/locations.js";
+import { countRequests, mark } from "./aef/perf.js";
 
 export type Channel = "r" | "g" | "b";
 export type Mode = "basic" | "advanced" | "turbo";
@@ -65,20 +72,33 @@ export class MixState {
 
   async load(): Promise<void> {
     try {
-      const store = new zarr.FetchStore(ZARR_URL);
-      const root = await zarr.open.v3(store, { kind: "group" });
-      const opened = await zarr.open.v3(root.resolve(VARIABLE), {
-        kind: "array",
-      });
+      mark("aef:load-start");
+      // Chunk bytes are cached (LRU, compressed) so revisiting a year or a
+      // tile deck has evicted skips the network; see byte-lru.ts.
+      const store = zarr.withByteCaching(
+        countRequests(new zarr.FetchStore(ZARR_URL)),
+        { cache: new ByteLru(CHUNK_CACHE_BYTES), keyFor: chunkRangesOnly },
+      );
+      // Group and array metadata are independent reads; fetch them together.
+      const location = zarr.root(store);
+      const [root, opened] = await Promise.all([
+        zarr.open.v3(location, { kind: "group" }),
+        zarr.open.v3(location.resolve(VARIABLE), { kind: "array" }),
+      ]);
       if (!opened.is("int8")) {
         throw new Error(
           `Expected AEF embeddings to be int8, got ${opened.dtype}`,
         );
       }
-      const labels = await fetchBandLabels(root);
+      mark("aef:arr-ready");
       this.arr = opened;
       this.rootAttrs = root.attrs;
-      this.bandLabels = labels;
+      // Labels are cosmetic (the switchboard falls back to "Band N"), so they
+      // don't gate the map.
+      fetchBandLabels(root).then(
+        (labels) => (this.bandLabels = labels),
+        (err) => console.warn("[aef-daw] band labels failed", err),
+      );
     } catch (err) {
       this.loadError = err instanceof Error ? err.message : String(err);
       console.error("[aef-daw] load failed", err);

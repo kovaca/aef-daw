@@ -4,6 +4,7 @@
   import { replaceState } from "$app/navigation";
   import { page } from "$app/state";
   import { MixState } from "$lib/state.svelte.js";
+  import { PERF } from "$lib/aef/perf.js";
   import { TurboState } from "$lib/audio/turbo-state.svelte.js";
   import { audioEngine } from "$lib/audio/engine.js";
   import { applyHash, serialize } from "$lib/url-sync.js";
@@ -12,6 +13,7 @@
   import AboutModal from "$lib/components/AboutModal.svelte";
 
   const aef = new MixState();
+  if (PERF && browser) (window as unknown as { __aef: MixState }).__aef = aef;
   const turbo = new TurboState();
   let aboutOpen = $state(false);
 

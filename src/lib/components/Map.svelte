@@ -13,6 +13,8 @@
     makeBasicRenderTile,
   } from "$lib/aef/render-tile.js";
   import { MIN_ZOOM, NUM_BANDS } from "$lib/aef/constants.js";
+  import { epsgResolver } from "$lib/aef/epsg.js";
+  import { mark, perf, PERF } from "$lib/aef/perf.js";
 
   let {
     aef,
@@ -37,6 +39,10 @@
   let lowZoom = $derived(aef.zoom <= 12);
 
   let device: Device | null = $state(null);
+
+  // PERF-only: start of the current "waiting for tiles" window, reset on
+  // layer rebuild and on moveend. Read back in onViewportLoad.
+  let loadT0 = 0;
   let weightsTex: Texture | null = $state(null);
 
 
@@ -45,6 +51,7 @@
     options: Parameters<typeof rawGetTileData>[1],
   ) {
     if (!device) device = options.device;
+    mark("aef:tile-request");
     return rawGetTileData(arr, options);
   }
 
@@ -63,6 +70,10 @@
     if (onCanvasReady) onCanvasReady(map.getCanvas());
     overlay = new MapboxOverlay({ interleaved: true, layers: [] });
     map.addControl(overlay);
+    if (PERF) {
+      map.on("moveend", () => (loadT0 = performance.now()));
+      map.once("load", () => mark("aef:map-load"));
+    }
 
     // Push map gestures into state, rAF-coalesced so a pan doesn't run the
     // reactive graph (and URL writer) on every render frame.
@@ -191,6 +202,8 @@
     // there's no reason to drop the tile cache. We do still rebuild on year
     // change because that selects a different time slice of the array.
     // Mode-driven shader swaps go through `updateTriggers.renderTile`.
+    loadT0 = performance.now();
+    mark("aef:layer-created");
     const layerProps = {
       id: `aef-zarr-layer-${yearIdx}`,
       node: aef.arr,
@@ -198,6 +211,7 @@
       selection: aef.selection,
       getTileData,
       renderTile,
+      epsgResolver,
       minZoom: MIN_ZOOM,
       maxRequests: 20,
       // ~256×256×64 bytes per tile = 4MB on the GPU, 
@@ -215,6 +229,14 @@
         ],
       },
       beforeId: "boundary_country_outline",
+      onViewportLoad: PERF
+        ? () => {
+            const ms = Math.round(performance.now() - loadT0);
+            perf.loads.push(ms);
+            mark("aef:viewport-load");
+            console.debug(`[aef-perf] viewport loaded in ${ms}ms`, { ...perf, loads: perf.loads.length });
+          }
+        : undefined,
     };
 
     const layer = new ZarrLayer(layerProps as unknown as ConstructorParameters<
